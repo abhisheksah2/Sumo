@@ -290,7 +290,7 @@ async def simulation_loop():
 
 
 async def main():
-    server = await websockets.serve(ws_handler, "localhost", 8765)
+    server = await websockets.serve(ws_handler, "0.0.0.0", 8765)
     print("3D Digital Twin WebSocket Server active on ws://localhost:8765")
     await asyncio.gather(server.wait_closed(), simulation_loop())
 
