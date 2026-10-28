@@ -377,7 +377,7 @@
   });
 
   function connectWebSocket() {
-    const socket = new WebSocket('ws://localhost:8765');
+    const socket = new WebSocket('wss://sumo-c2dt.onrender.com');
     const statusLabel = document.getElementById('ws-status');
 
     socket.onopen = () => {
