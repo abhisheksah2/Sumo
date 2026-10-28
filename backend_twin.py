@@ -1,3 +1,4 @@
+import os
 import asyncio
 import json
 import math
@@ -300,7 +301,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-tls_list = traci.trafficlight.getIDList()
-print(f"Total traffic lights controlled: {len(tls_list)}")
-print("Traffic Light IDs:", tls_list)
