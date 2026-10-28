@@ -290,8 +290,11 @@ async def simulation_loop():
 
 
 async def main():
-    server = await websockets.serve(ws_handler, "0.0.0.0", 8765)
-    print("3D Digital Twin WebSocket Server active on ws://localhost:8765")
+    # Read the dynamic port assigned by Render, defaulting to 8765 locally
+    port = int(os.environ.get("PORT", 8765))
+
+    server = await websockets.serve(ws_handler, "0.0.0.0", port)
+    print(f"3D Digital Twin WebSocket Server active on port {port}")
     await asyncio.gather(server.wait_closed(), simulation_loop())
 
 
