@@ -261,7 +261,7 @@ def run_simulation_step(step):
 
 
 async def simulation_loop():
-    traci.start(sumo_cmd)
+    traci.start(["sumo", "-c", "osm.sumocfg"])
     await asyncio.to_thread(init_tls_metadata)
     step = 0
 
