@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Sector 22 Chandigarh - 3D Digital Twin</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- MapLibre GL -->
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+  <!-- Three.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <style>
+    body, html {
+      margin: 0; padding: 0; width: 100%; height: 100%;
+      overflow: hidden; background: #0f172a;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    #map { width: 100%; height: 100%; }
+    #dashboard {
+      position: absolute; top: 16px; left: 16px;
+      background: rgba(15, 23, 42, 0.94); color: #f8fafc;
+      padding: 16px 20px; border-radius: 10px; z-index: 10;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      backdrop-filter: blur(8px); min-width: 245px;
+    }
+    #dashboard h3 { margin: 0 0 4px 0; font-size: 15px; color: #38bdf8; }
+    .subtitle { font-size: 11px; color: #94a3b8; margin-bottom: 12px; }
+    .kpi { margin-bottom: 8px; font-size: 13px; display: flex; justify-content: space-between; align-items: center; }
+    .kpi span { font-weight: 700; color: #4ade80; }
+    .badge-ai {
+      background: rgba(56, 189, 248, 0.15); color: #38bdf8;
+      border: 1px solid rgba(56, 189, 248, 0.4);
+      padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 600;
+    }
+    .slider-row { margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.1); font-size: 12px; }
+    .slider-row input { width: 100%; margin-top: 4px; cursor: pointer; }
+  </style>
+</head>
+<body>
+
+<div id="dashboard">
+  <h3>Smart City 3D Twin</h3>
+  <div class="subtitle">Zone: Sector 22, Chandigarh</div>
+  <div class="kpi">Simulation Step: <span id="step-count">0</span></div>
+  <div class="kpi">Active Vehicles: <span id="vehicle-count">0</span></div>
+  <div class="kpi">Control Mode: <span class="badge-ai">Adaptive AI</span></div>
+  <div class="kpi">Stop-Bars Active: <span id="tls-count" style="color:#facc15;">0</span></div>
+  <div class="kpi">Adaptive Switches: <span id="switch-count" style="color:#38bdf8;">0</span></div>
+  <div class="kpi">Status: <span id="ws-status" style="color: #f87171;">Connecting...</span></div>
+  <div class="slider-row">
+    <div style="display:flex; justify-content:space-between;">
+      <span>3D Vehicle Scale:</span>
+      <strong id="scale-label" style="color:#38bdf8;">1.8x</strong>
+    </div>
+    <input id="scale-slider" type="range" min="1.0" max="3.5" step="0.1" value="1.8" />
+  </div>
+</div>
+
+<div id="map"></div>
+
+<script>
+  const SECTOR_22_BOUNDS = [
+    [76.7620, 30.7220],
+    [76.7860, 30.7420]
+  ];
+
+  const map = new maplibregl.Map({
+    container: 'map',
+    style: 'https://tiles.openfreemap.org/styles/liberty',
+    center: [76.7735, 30.7325],
+    zoom: 17.2,
+    minZoom: 15.8,
+    maxZoom: 20,
+    pitch: 52,
+    maxPitch: 55,
+    bearing: -20,
+    maxBounds: SECTOR_22_BOUNDS,
+    antialias: true,
+    fadeDuration: 0
+  });
+
+  let hasCentered = false;
+  let activeVehicleData = [];
+  let activeTrafficLights = [];
+  let vehicleScaleMultiplier = 1.8;
+  let sceneOriginLngLat = [76.7735, 30.7325];
+
+  document.getElementById('scale-slider').addEventListener('input', (e) => {
+    vehicleScaleMultiplier = parseFloat(e.target.value);
+    document.getElementById('scale-label').textContent = vehicleScaleMultiplier.toFixed(1) + 'x';
+    map.triggerRepaint();
+  });
+
+  const CAR_COLORS = [
+    0x0ea5e9, // Electric Blue
+    0xef4444, // Crimson Red
+    0xf8fafc, // Alpine White
+    0xfacc15, // Taxi Yellow
+    0x10b981, // Emerald Green
+    0xf97316, // Sunset Orange
+    0xe2e8f0  // Metallic Silver
+  ];
+
+  function getColorForId(id) {
+    let hash = 0;
+    const str = String(id);
+    for (let i = 0; i < str.length; i++) {
+      hash = (hash * 31 + str.charCodeAt(i)) >>> 0;
+    }
+    return CAR_COLORS[hash % CAR_COLORS.length];
+  }
+
+  // Locked 3D Vehicle Geometries
+  const SHARED = {
+    shadowGeo: new THREE.BoxGeometry(2.2, 0.02, 4.8),
+    shadowMat: new THREE.MeshBasicMaterial({ color: 0x090d16 }),
+
+    bumperGeo: new THREE.BoxGeometry(2.06, 0.24, 4.62),
+    bumperMat: new THREE.MeshLambertMaterial({ color: 0x1e293b }),
+
+    chassisGeo: new THREE.BoxGeometry(2.0, 0.58, 4.45),
+
+    cabinGeo: new THREE.BoxGeometry(1.68, 0.50, 2.30),
+    cabinMat: new THREE.MeshPhongMaterial({ color: 0x0f172a, shininess: 90, specular: 0x64748b }),
+
+    roofGeo: new THREE.BoxGeometry(1.58, 0.08, 1.95),
+
+    wheelGeo: (() => {
+      const g = new THREE.CylinderGeometry(0.36, 0.36, 0.28, 10);
+      g.rotateZ(Math.PI / 2);
+      return g;
+    })(),
+    wheelMat: new THREE.MeshLambertMaterial({ color: 0x111827 }),
+
+    rimGeo: (() => {
+      const g = new THREE.CylinderGeometry(0.20, 0.20, 0.30, 8);
+      g.rotateZ(Math.PI / 2);
+      return g;
+    })(),
+    rimMat: new THREE.MeshLambertMaterial({ color: 0xe2e8f0 }),
+
+    headlightGeo: new THREE.BoxGeometry(0.42, 0.16, 0.08),
+    headlightMat: new THREE.MeshBasicMaterial({ color: 0xfef08a }),
+
+    grilleGeo: new THREE.BoxGeometry(0.76, 0.20, 0.06),
+    grilleMat: new THREE.MeshBasicMaterial({ color: 0x0f172a }),
+
+    taillightGeo: new THREE.BoxGeometry(0.46, 0.16, 0.08),
+    taillightMat: new THREE.MeshBasicMaterial({ color: 0xff2a2a })
+  };
+
+  function createRealistic3DCar(vehId) {
+    const group = new THREE.Group();
+    const paintColor = getColorForId(vehId);
+    const bodyMat = new THREE.MeshPhongMaterial({
+      color: paintColor,
+      shininess: 80,
+      specular: 0x444444
+    });
+
+    const shadow = new THREE.Mesh(SHARED.shadowGeo, SHARED.shadowMat);
+    shadow.position.set(0, 0.02, 0);
+    group.add(shadow);
+
+    const bumper = new THREE.Mesh(SHARED.bumperGeo, SHARED.bumperMat);
+    bumper.position.set(0, 0.34, 0);
+    group.add(bumper);
+
+    const chassis = new THREE.Mesh(SHARED.chassisGeo, bodyMat);
+    chassis.position.set(0, 0.62, 0);
+    group.add(chassis);
+
+    const cabin = new THREE.Mesh(SHARED.cabinGeo, SHARED.cabinMat);
+    cabin.position.set(0, 1.10, 0.18);
+    group.add(cabin);
+
+    const roof = new THREE.Mesh(SHARED.roofGeo, bodyMat);
+    roof.position.set(0, 1.37, 0.18);
+    group.add(roof);
+
+    const wheelPositions = [
+      [-1.0, 0.36, -1.35],
+      [ 1.0, 0.36, -1.35],
+      [-1.0, 0.36,  1.35],
+      [ 1.0, 0.36,  1.35]
+    ];
+    for (const [wx, wy, wz] of wheelPositions) {
+      const tire = new THREE.Mesh(SHARED.wheelGeo, SHARED.wheelMat);
+      tire.position.set(wx, wy, wz);
+      const rim = new THREE.Mesh(SHARED.rimGeo, SHARED.rimMat);
+      rim.position.set(wx, wy, wz);
+      group.add(tire, rim);
+    }
+
+    const hlLeft = new THREE.Mesh(SHARED.headlightGeo, SHARED.headlightMat);
+    hlLeft.position.set(-0.66, 0.68, -2.24);
+    const hlRight = new THREE.Mesh(SHARED.headlightGeo, SHARED.headlightMat);
+    hlRight.position.set(0.66, 0.68, -2.24);
+    const grille = new THREE.Mesh(SHARED.grilleGeo, SHARED.grilleMat);
+    grille.position.set(0, 0.62, -2.24);
+    group.add(hlLeft, hlRight, grille);
+
+    const tlLeft = new THREE.Mesh(SHARED.taillightGeo, SHARED.taillightMat);
+    tlLeft.position.set(-0.66, 0.70, 2.24);
+    const tlRight = new THREE.Mesh(SHARED.taillightGeo, SHARED.taillightMat);
+    tlRight.position.set(0.66, 0.70, 2.24);
+    group.add(tlLeft, tlRight);
+
+    group.traverse((child) => {
+      if (child.isMesh) child.frustumCulled = false;
+    });
+
+    return group;
+  }
+
+  const custom3DVehicleLayer = {
+    id: 'threejs-3d-vehicles',
+    type: 'custom',
+    renderingMode: '3d',
+
+    onAdd: function (mapInstance, gl) {
+      this.map = mapInstance;
+      this.camera = new THREE.Camera();
+      this.scene = new THREE.Scene();
+
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.9);
+      this.scene.add(ambientLight);
+
+      const sunLight = new THREE.DirectionalLight(0xffffff, 1.2);
+      sunLight.position.set(80, 200, 120);
+      this.scene.add(sunLight);
+
+      this.vehicleMeshes = new Map();
+
+      this.renderer = new THREE.WebGLRenderer({
+        canvas: mapInstance.getCanvas(),
+        context: gl,
+        antialias: true
+      });
+      this.renderer.autoClear = false;
+    },
+
+    render: function (gl, matrix) {
+      const originMerc = maplibregl.MercatorCoordinate.fromLngLat(sceneOriginLngLat, 0);
+      const s = originMerc.meterInMercatorCoordinateUnits();
+
+      const rotationX = new THREE.Matrix4().makeRotationAxis(new THREE.Vector3(1, 0, 0), Math.PI / 2);
+      const m = new THREE.Matrix4().fromArray(matrix);
+      const l = new THREE.Matrix4()
+        .makeTranslation(originMerc.x, originMerc.y, originMerc.z)
+        .scale(new THREE.Vector3(s, -s, s))
+        .multiply(rotationX);
+
+      this.camera.projectionMatrix = m.multiply(l);
+
+      const currentIds = new Set();
+
+      for (let i = 0; i < activeVehicleData.length; i++) {
+        const v = activeVehicleData[i];
+        currentIds.add(v.id);
+
+        let carMesh = this.vehicleMeshes.get(v.id);
+        if (!carMesh) {
+          carMesh = createRealistic3DCar(v.id);
+          this.scene.add(carMesh);
+          this.vehicleMeshes.set(v.id, carMesh);
+        }
+
+        const vMerc = maplibregl.MercatorCoordinate.fromLngLat([v.lon, v.lat], 0);
+        const xMeters = (vMerc.x - originMerc.x) / s;
+        const zMeters = (vMerc.y - originMerc.y) / s;
+
+        carMesh.position.set(xMeters, 0.08, zMeters);
+        carMesh.scale.set(vehicleScaleMultiplier, vehicleScaleMultiplier, vehicleScaleMultiplier);
+        carMesh.rotation.set(0, -(v.angle * Math.PI) / 180, 0);
+      }
+
+      for (const [id, mesh] of this.vehicleMeshes.entries()) {
+        if (!currentIds.has(id)) {
+          this.scene.remove(mesh);
+          this.vehicleMeshes.delete(id);
+        }
+      }
+
+      this.renderer.resetState();
+      this.renderer.render(this.scene, this.camera);
+    }
+  };
+
+  map.on('load', () => {
+    if (map.getLayer('building-3d')) {
+      map.setLayerZoomRange('building-3d', 16.5, 24);
+    }
+
+    const sw = SECTOR_22_BOUNDS[0];
+    const ne = SECTOR_22_BOUNDS[1];
+
+    map.addSource('sector-mask', {
+      type: 'geojson',
+      data: {
+        type: 'Feature',
+        geometry: {
+          type: 'Polygon',
+          coordinates: [
+            [[76.5, 30.5], [77.0, 30.5], [77.0, 31.0], [76.5, 31.0], [76.5, 30.5]],
+            [[sw[0], sw[1]], [ne[0], sw[1]], [ne[0], ne[1]], [sw[0], ne[1]], [sw[0], sw[1]]]
+          ]
+        }
+      }
+    });
+
+    map.addLayer({
+      id: 'sector-22-mask-fill',
+      type: 'fill',
+      source: 'sector-mask',
+      paint: {
+        'fill-color': '#0f172a',
+        'fill-opacity': 0.85
+      }
+    });
+
+    map.addLayer({
+      id: 'sector-22-border',
+      type: 'line',
+      source: 'sector-mask',
+      paint: {
+        'line-color': '#38bdf8',
+        'line-width': 2.5,
+        'line-dasharray': [3, 2]
+      }
+    });
+
+    // SUMO-Style Stop-Line Bars across all lanes at all intersections
+    map.addSource('sumo-stop-bars', {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] }
+    });
+
+    map.addLayer({
+      id: 'sumo-stop-bars-glow',
+      type: 'line',
+      source: 'sumo-stop-bars',
+      layout: { 'line-cap': 'round' },
+      paint: {
+        'line-width': 10,
+        'line-color': [
+          'match', ['get', 'color'],
+          'green', '#22c55e',
+          'yellow', '#eab308',
+          '#ef4444'
+        ],
+        'line-opacity': 0.45,
+        'line-blur': 3
+      }
+    });
+
+    map.addLayer({
+      id: 'sumo-stop-bars-core',
+      type: 'line',
+      source: 'sumo-stop-bars',
+      layout: { 'line-cap': 'butt' },
+      paint: {
+        'line-width': 4.5,
+        'line-color': [
+          'match', ['get', 'color'],
+          'green', '#4ade80',
+          'yellow', '#facc15',
+          '#ff2a2a'
+        ]
+      }
+    });
+
+    map.addLayer(custom3DVehicleLayer);
+
+    connectWebSocket();
+  });
+
+  function connectWebSocket() {
+    const socket = new WebSocket('ws://localhost:8765');
+    const statusLabel = document.getElementById('ws-status');
+
+    socket.onopen = () => {
+      statusLabel.textContent = 'Live Connected';
+      statusLabel.style.color = '#4ade80';
+    };
+
+    socket.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      document.getElementById('step-count').textContent = data.step;
+      document.getElementById('vehicle-count').textContent = data.active_vehicles;
+      if (data.adaptive_switches !== undefined) {
+        document.getElementById('switch-count').textContent = data.adaptive_switches;
+      }
+
+      activeVehicleData = data.vehicles || [];
+      activeTrafficLights = data.traffic_lights || [];
+
+      document.getElementById('tls-count').textContent = activeTrafficLights.length;
+
+      const barSource = map.getSource('sumo-stop-bars');
+      if (barSource && activeTrafficLights.length > 0) {
+        const features = activeTrafficLights.map(tl => ({
+          type: 'Feature',
+          geometry: {
+            type: 'LineString',
+            coordinates: tl.bar
+          },
+          properties: {
+            id: tl.id,
+            color: tl.color,
+            queue: tl.queue
+          }
+        }));
+        barSource.setData({ type: 'FeatureCollection', features });
+      }
+
+      if (!hasCentered && activeVehicleData.length > 0) {
+        const first = activeVehicleData[0];
+        sceneOriginLngLat = [first.lon, first.lat];
+        map.jumpTo({ center: [first.lon, first.lat], zoom: 17.8, pitch: 52, bearing: -20 });
+        hasCentered = true;
+      }
+
+      map.triggerRepaint();
+    };
+
+    socket.onclose = () => {
+      statusLabel.textContent = 'Disconnected';
+      statusLabel.style.color = '#f87171';
+      setTimeout(connectWebSocket, 2000);
+    };
+  }
+</script>
+</body>
+</html>

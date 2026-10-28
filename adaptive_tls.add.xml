@@ -1,0 +1,18 @@
+<additional>
+    <!-- Replace 'TL_ID' with the actual traffic light junction ID from your osm.net.xml -->
+    <tlLogic id="TL_ID" type="actuated" programID="adaptive_program" offset="0">
+        <!-- Green phase with min and max duration -->
+        <phase duration="30" state="GgrrGgrr" minDur="5" maxDur="50"/>
+        <!-- Yellow phase -->
+        <phase duration="3"  state="yyrryyrr"/>
+        <!-- Next direction green phase -->
+        <phase duration="30" state="rrGgrrGg" minDur="5" maxDur="50"/>
+        <!-- Yellow phase -->
+        <phase duration="3"  state="rryyrryy"/>
+
+        <!-- Actuation parameters -->
+        <param key="max-gap" value="3.0"/>
+        <param key="detector-gap" value="2.0"/>
+        <param key="show-detectors" value="true"/>
+    </tlLogic>
+</additional>
